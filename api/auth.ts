@@ -10,7 +10,7 @@ import {
   setSessionCookie,
   SITE_SESSION_COOKIE,
   verifySessionToken,
-} from '../server/siteAuth'
+} from '../server/siteAuth.js'
 
 type AuthStatusBody = {
   passwordRequired: boolean

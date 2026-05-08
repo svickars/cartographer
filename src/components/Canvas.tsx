@@ -13,22 +13,70 @@ const INK = '#1a2744'
 export type CanvasTool = 'pen' | 'eraser'
 
 export type CanvasHandle = {
-  /** PNG base64 without the data URL prefix */
   exportPngBase64: () => string
   clear: () => void
+  /** True when the canvas has no meaningful ink (only parchment). */
+  isBlank: () => boolean
 }
+
+const PLACEHOLDER_HINTS = [
+  'an island or coastline',
+  'mountains and valleys',
+  'a neighbourhood you remember',
+  'roads and a river',
+  'a harbour or pier',
+  'a forest path',
+  'your hometown — rough boxes are fine',
+  'labels help — spell place names as you like',
+]
 
 type CanvasProps = {
   className?: string
-  /** Base brush size in CSS pixels (velocity modulates around this). */
   defaultBrushSize?: number
+  /** Controlled tool (optional — otherwise internal state). */
+  tool?: CanvasTool
+  onToolChange?: (t: CanvasTool) => void
+  brushSize?: number
+  onBrushSizeChange?: (n: number) => void
+  /** Cycling placeholder in centre when true */
+  showPlaceholder?: boolean
+  onInkChange?: (hasInk: boolean) => void
 }
 
-/** Maps pointer speed to stroke width — slower strokes read heavier / wider. */
-function widthFromVelocity(
-  speedPxPerMs: number,
-  baseSize: number,
-): number {
+function rgbDistanceFromParchment(r: number, g: number, b: number): number {
+  const pr = 244
+  const pg = 239
+  const pb = 230
+  return Math.abs(r - pr) + Math.abs(g - pg) + Math.abs(b - pb)
+}
+
+/** Sample canvas pixels — returns true if anything noticeably darker / not parchment. */
+function canvasHasInk(canvas: HTMLCanvasElement): boolean {
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return false
+  const w = canvas.width
+  const h = canvas.height
+  if (w < 2 || h < 2) return false
+  const stride = Math.max(
+    2,
+    Math.round(Math.sqrt((w * h) / 6000)),
+  )
+  const { data } = ctx.getImageData(0, 0, w, h)
+  for (let y = 0; y < h; y += stride) {
+    for (let x = 0; x < w; x += stride) {
+      const i = (Math.floor(y) * w + Math.floor(x)) * 4
+      const a = data[i + 3] ?? 255
+      if (a < 24) continue
+      const r = data[i] ?? 244
+      const g = data[i + 1] ?? 239
+      const b = data[i + 2] ?? 230
+      if (rgbDistanceFromParchment(r, g, b) > 28) return true
+    }
+  }
+  return false
+}
+
+function widthFromVelocity(speedPxPerMs: number, baseSize: number): number {
   const ref = 1.2
   const t = Math.min(speedPxPerMs / ref, 1)
   const minM = 0.38
@@ -38,19 +86,39 @@ function widthFromVelocity(
 }
 
 export const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
-  { className = '', defaultBrushSize = 6 },
+  {
+    className = '',
+    defaultBrushSize = 6,
+    tool: toolProp,
+    brushSize: brushProp,
+    showPlaceholder = true,
+    onInkChange,
+  },
   ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
+  const lastInkNotifiedRef = useRef(false)
 
-  const [tool, setTool] = useState<CanvasTool>('pen')
-  const [brushSize, setBrushSize] = useState(defaultBrushSize)
+  const tool = toolProp ?? 'pen'
+  const brushSize = brushProp ?? defaultBrushSize
+
+  const [hintIndex, setHintIndex] = useState(0)
+  const [hintHidden, setHintHidden] = useState(false)
+
+  useEffect(() => {
+    if (!showPlaceholder) return
+    const t = window.setInterval(() => {
+      setHintIndex((i) => (i + 1) % PLACEHOLDER_HINTS.length)
+    }, 3200)
+    return () => window.clearInterval(t)
+  }, [showPlaceholder])
 
   const drawingRef = useRef(false)
   const lastRef = useRef<{ x: number; y: number; t: number } | null>(null)
+  const lastPixelSizeRef = useRef({ w: 0, h: 0 })
 
-  const resizeCanvas = useCallback(() => {
+  const resizeCanvas = useCallback((forceRedraw?: boolean) => {
     const canvas = canvasRef.current
     const wrap = wrapRef.current
     if (!canvas || !wrap) return
@@ -58,7 +126,32 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     const rect = wrap.getBoundingClientRect()
     const w = Math.max(1, Math.floor(rect.width))
     const h = Math.max(1, Math.floor(rect.height))
+
+    if (
+      !forceRedraw &&
+      lastPixelSizeRef.current.w === w &&
+      lastPixelSizeRef.current.h === h
+    ) {
+      return
+    }
+
     const dpr = Math.min(window.devicePixelRatio ?? 1, 2)
+
+    const oldW = canvas.width
+    const oldH = canvas.height
+
+    let snapshot: HTMLCanvasElement | null = null
+    if (!forceRedraw && oldW > 1 && oldH > 1 && canvasHasInk(canvas)) {
+      snapshot = document.createElement('canvas')
+      snapshot.width = oldW
+      snapshot.height = oldH
+      const sctx = snapshot.getContext('2d')
+      if (sctx) {
+        sctx.drawImage(canvas, 0, 0)
+      }
+    }
+
+    lastPixelSizeRef.current = { w, h }
 
     canvas.style.width = `${w}px`
     canvas.style.height = `${h}px`
@@ -70,6 +163,10 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.fillStyle = PARCHMENT
     ctx.fillRect(0, 0, w, h)
+
+    if (snapshot && !forceRedraw) {
+      ctx.drawImage(snapshot, 0, 0, w, h)
+    }
   }, [])
 
   useEffect(() => {
@@ -120,9 +217,21 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     [brushSize, tool],
   )
 
+  const flushInkNotification = useCallback(() => {
+    requestAnimationFrame(() => {
+      const canvas = canvasRef.current
+      if (!canvas) return
+      const has = canvasHasInk(canvas)
+      if (lastInkNotifiedRef.current === has) return
+      lastInkNotifiedRef.current = has
+      onInkChange?.(has)
+    })
+  }, [onInkChange])
+
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLCanvasElement>) => {
       if (e.button !== 0) return
+      setHintHidden(true)
       e.currentTarget.setPointerCapture(e.pointerId)
       drawingRef.current = true
       const { x, y } = getPos(e)
@@ -139,8 +248,9 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
       ctx.arc(x, y, brushSize * 0.45, 0, Math.PI * 2)
       ctx.fill()
       ctx.restore()
+      flushInkNotification()
     },
-    [brushSize, getPos, tool],
+    [brushSize, flushInkNotification, getPos, tool],
   )
 
   const onPointerMove = useCallback(
@@ -181,11 +291,14 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
   const endStroke = useCallback(() => {
     drawingRef.current = false
     lastRef.current = null
-  }, [])
+    flushInkNotification()
+  }, [flushInkNotification])
 
   const clear = useCallback(() => {
-    resizeCanvas()
-  }, [resizeCanvas])
+    resizeCanvas(true)
+    lastInkNotifiedRef.current = false
+    onInkChange?.(false)
+  }, [resizeCanvas, onInkChange])
 
   useImperativeHandle(
     ref,
@@ -198,74 +311,45 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
         return parts[1] ?? ''
       },
       clear,
+      isBlank: () => {
+        const canvas = canvasRef.current
+        return !canvas || !canvasHasInk(canvas)
+      },
     }),
     [clear],
   )
 
-  return (
-    <div className={`flex flex-col gap-3 ${className}`}>
-      <div className="flex flex-wrap items-center gap-2 border border-[#c4a35a]/40 bg-[#faf7f0] px-3 py-2 font-sans text-sm text-[#1a2744]">
-        <span className="font-medium text-[#2d4a3e]">Tools</span>
-        <button
-          type="button"
-          onClick={() => setTool('pen')}
-          className={`rounded border px-2 py-1 transition ${
-            tool === 'pen'
-              ? 'border-[#1a2744] bg-[#1a2744] text-[#f4efe6]'
-              : 'border-[#1a2744]/30 bg-white hover:border-[#1a2744]/60'
-          }`}
-        >
-          Pen
-        </button>
-        <button
-          type="button"
-          onClick={() => setTool('eraser')}
-          className={`rounded border px-2 py-1 transition ${
-            tool === 'eraser'
-              ? 'border-[#1a2744] bg-[#1a2744] text-[#f4efe6]'
-              : 'border-[#1a2744]/30 bg-white hover:border-[#1a2744]/60'
-          }`}
-        >
-          Eraser
-        </button>
-        <label className="ml-2 flex items-center gap-2">
-          <span className="text-[#1a2744]/80">Stroke</span>
-          <input
-            type="range"
-            min={2}
-            max={48}
-            value={brushSize}
-            onChange={(e) => setBrushSize(Number(e.target.value))}
-            className="w-32 accent-[#2d4a3e]"
-          />
-          <span className="tabular-nums text-[#1a2744]/70">{brushSize}px</span>
-        </label>
-        <button
-          type="button"
-          onClick={clear}
-          className="ml-auto rounded border border-[#8b2942]/50 bg-[#faf7f0] px-2 py-1 text-[#6b1f33] hover:bg-[#fceff2]"
-        >
-          Clear
-        </button>
-      </div>
+  const hint = PLACEHOLDER_HINTS[hintIndex] ?? PLACEHOLDER_HINTS[0]
 
+  return (
+    <div className={`relative min-h-0 ${className}`}>
       <div
         ref={wrapRef}
-        className="relative min-h-[420px] flex-1 overflow-hidden rounded border-2 border-[#1a2744]/25 shadow-[inset_0_0_80px_rgba(26,39,68,0.06)]"
+        className="relative aspect-[4/3] w-full shrink-0 overflow-hidden rounded-lg bg-[#f4efe6] shadow-[0_12px_40px_rgba(26,39,68,0.14)]"
       >
         <canvas
           ref={canvasRef}
-          className="touch-none block h-full w-full cursor-crosshair bg-[#f4efe6]"
+          className="touch-none absolute inset-0 block h-full w-full cursor-crosshair bg-[#f4efe6]"
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={endStroke}
           onPointerCancel={endStroke}
         />
+        {showPlaceholder && !hintHidden && (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 flex items-center justify-center p-8"
+          >
+            <p
+              key={hintIndex}
+              className="max-w-md text-center font-serif text-lg leading-relaxed text-[#1a2744]/50 transition-opacity duration-500"
+            >
+              Try drawing{' '}
+              <span className="italic text-[#1a2744]/60">{hint}</span>
+            </p>
+          </div>
+        )}
       </div>
-      <p className="font-sans text-xs text-[#1a2744]/55">
-        Pointer drawing with velocity-based stroke width (Pointer Events).{' '}
-        {/* TODO: optional stylus pressure when `pointerType === "pen"` reports hardware pressure */}
-      </p>
     </div>
   )
 })

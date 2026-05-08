@@ -1,4 +1,5 @@
 import type { SketchInterpretation } from '../types/interpretation'
+import type { GenerativeControls } from '../types/generativeControls'
 
 export type InterpretResponse =
   | { ok: true; interpretation: SketchInterpretation }
@@ -6,11 +7,13 @@ export type InterpretResponse =
 
 export async function interpretSketch(
   pngBase64: string,
+  controls: GenerativeControls,
 ): Promise<SketchInterpretation> {
   const res = await fetch('/api/interpret', {
     method: 'POST',
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ imageBase64: pngBase64 }),
+    body: JSON.stringify({ imageBase64: pngBase64, controls }),
   })
 
   const body = (await res.json()) as InterpretResponse

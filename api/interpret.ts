@@ -1,7 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
+import { requireSiteAuth } from './siteAuth'
+import { buildInterpretationControlGuidance } from '../src/lib/generativeControlCopy'
 import type { SketchInterpretation } from '../src/types/interpretation'
+import {
+  normalizeControls,
+  type GenerativeControls,
+} from '../src/types/generativeControls'
 
 const INTERPRET_PROMPT = `You are a cartographer's assistant. A user has drawn a freehand sketch of a place from memory or imagination. Interpret the sketch and produce a structured description suitable for generating a styled illustrated map.
 Identify:
@@ -41,11 +47,18 @@ function extractJsonObject(text: string): string {
   return text.trim()
 }
 
+function buildUserText(controls: GenerativeControls): string {
+  const guidance = buildInterpretationControlGuidance(controls)
+  return `${INTERPRET_PROMPT}\n\n${guidance}`
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST')
     return res.status(405).json({ ok: false, error: 'Method not allowed' })
   }
+
+  if (!requireSiteAuth(req, res)) return
 
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) {
@@ -55,11 +68,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
   }
 
-  const body = req.body as { imageBase64?: string } | undefined
+  const body = req.body as
+    | { imageBase64?: string; controls?: Partial<GenerativeControls> }
+    | undefined
   const raw = body?.imageBase64
   if (!raw || typeof raw !== 'string') {
-    return res.status(400).json({ ok: false, error: 'Expected JSON body { imageBase64 }' })
+    return res.status(400).json({
+      ok: false,
+      error: 'Expected JSON body { imageBase64, controls? }',
+    })
   }
+
+  const controls = normalizeControls(body?.controls)
 
   const pngBase64 = stripBase64Prefix(raw)
 
@@ -83,7 +103,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             },
             {
               type: 'text',
-              text: INTERPRET_PROMPT,
+              text: buildUserText(controls),
             },
           ],
         },

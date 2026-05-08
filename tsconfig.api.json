@@ -2,6 +2,7 @@
   "extends": "./tsconfig.node.json",
   "include": [
     "api/**/*.ts",
+    "server/**/*.ts",
     "src/types/**/*.ts",
     "src/lib/generativeControlCopy.ts"
   ]

@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, timingSafeEqual } from 'crypto'
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
@@ -93,7 +93,13 @@ export function getCookie(req: VercelRequest, name: string): string | undefined 
     const i = s.indexOf('=')
     if (i === -1) continue
     const k = s.slice(0, i)
-    if (k === name) return decodeURIComponent(s.slice(i + 1))
+    if (k === name) {
+      try {
+        return decodeURIComponent(s.slice(i + 1))
+      } catch {
+        return undefined
+      }
+    }
   }
   return undefined
 }

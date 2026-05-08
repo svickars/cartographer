@@ -4,7 +4,7 @@ import { put } from '@vercel/blob'
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
 import { getNeonSql } from './galleryDb'
-import { requireSiteAuth } from './siteAuth'
+import { requireSiteAuth } from '../server/siteAuth'
 
 export type GalleryRow = {
   id: string

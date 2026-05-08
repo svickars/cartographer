@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
-import { requireSiteAuth } from './siteAuth'
+import { requireSiteAuth } from '../server/siteAuth'
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {

@@ -2,7 +2,7 @@ import OpenAI, { toFile } from 'openai'
 import type { ImagesResponse } from 'openai/resources/images'
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
-import { requireSiteAuth } from './siteAuth'
+import { requireSiteAuth } from '../server/siteAuth'
 
 function stripBase64Prefix(input: string): string {
   const m = /^data:image\/\w+;base64,/.exec(input)

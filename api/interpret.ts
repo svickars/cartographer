@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
-import { requireSiteAuth } from './siteAuth'
+import { requireSiteAuth } from '../server/siteAuth'
 import { buildInterpretationControlGuidance } from '../src/lib/generativeControlCopy'
 import type { SketchInterpretation } from '../src/types/interpretation'
 import {

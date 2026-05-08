@@ -1,9 +1,9 @@
-import { randomUUID } from 'node:crypto'
+import { randomUUID } from 'crypto'
 
 import { put } from '@vercel/blob'
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
-import { getNeonSql } from './galleryDb'
+import { getNeonSql } from './galleryDb.js'
 import { requireSiteAuth } from '../server/siteAuth.js'
 
 export type GalleryRow = {

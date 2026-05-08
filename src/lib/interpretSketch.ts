@@ -1,5 +1,6 @@
 import type { SketchInterpretation } from '../types/interpretation'
 import type { GenerativeControls } from '../types/generativeControls'
+import { readJsonResponse } from './readJsonResponse'
 
 export type InterpretResponse =
   | { ok: true; interpretation: SketchInterpretation }
@@ -16,7 +17,7 @@ export async function interpretSketch(
     body: JSON.stringify({ imageBase64: pngBase64, controls }),
   })
 
-  const body = (await res.json()) as InterpretResponse
+  const body = await readJsonResponse<InterpretResponse>(res)
 
   if (!res.ok || !body.ok) {
     const message =

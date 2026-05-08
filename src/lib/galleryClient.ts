@@ -1,12 +1,14 @@
 import type { GalleryEntry } from '../types/gallery'
+import { readJsonResponse } from './readJsonResponse'
 
 const jsonHeaders = { 'Content-Type': 'application/json' }
 
 export async function fetchGalleryEntries(): Promise<GalleryEntry[]> {
   const res = await fetch('/api/gallery', { credentials: 'include' })
-  const data = (await res.json()) as
+  const data = await readJsonResponse<
     | { ok: true; entries: GalleryEntry[] }
     | { ok: false; error?: string }
+  >(res)
   if (!res.ok || !data.ok || !('entries' in data)) {
     throw new Error(
       !data.ok && 'error' in data && data.error
@@ -36,9 +38,10 @@ export async function createGalleryEntry(entry: {
       mapDataUrl: entry.mapDataUrl,
     }),
   })
-  const data = (await res.json()) as
+  const data = await readJsonResponse<
     | { ok: true; entries: GalleryEntry[] }
     | { ok: false; error?: string }
+  >(res)
   if (!res.ok || !data.ok) {
     const msg =
       !data.ok && 'error' in data && data.error

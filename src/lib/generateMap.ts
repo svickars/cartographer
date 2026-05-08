@@ -1,3 +1,5 @@
+import { readJsonResponse } from './readJsonResponse'
+
 export interface GenerateMapResult {
   imageUrl: string
 }
@@ -30,9 +32,10 @@ export async function generateMap(
     body: JSON.stringify(body),
   })
 
-  const json = (await res.json()) as
+  const json = await readJsonResponse<
     | ({ ok: true } & GenerateMapResult)
     | { ok: false; error: string }
+  >(res)
 
   if (!res.ok || !json.ok) {
     const message =

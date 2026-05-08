@@ -2,12 +2,12 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
 import { requireSiteAuth } from '../server/siteAuth.js'
-import { buildInterpretationControlGuidance } from '../src/lib/generativeControlCopy'
-import type { SketchInterpretation } from '../src/types/interpretation'
+import { buildInterpretationControlGuidance } from '../src/lib/generativeControlCopy.js'
+import type { SketchInterpretation } from '../src/types/interpretation.js'
 import {
   normalizeControls,
   type GenerativeControls,
-} from '../src/types/generativeControls'
+} from '../src/types/generativeControls.js'
 
 const INTERPRET_PROMPT = `You are a cartographer's assistant. A user has drawn a freehand sketch of a place from memory or imagination. Interpret the sketch and produce a structured description suitable for generating a styled illustrated map.
 Identify:

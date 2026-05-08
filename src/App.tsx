@@ -60,7 +60,6 @@ export default function App() {
   const pipelineLock = useRef(false)
 
   const [wizardStep, setWizardStep] = useState(1)
-  const [canvasExpanded, setCanvasExpanded] = useState(false)
 
   const [tool, setTool] = useState<CanvasTool>('pen')
   const [brushSize, setBrushSize] = useState(6)
@@ -84,10 +83,10 @@ export default function App() {
   const [hasCanvasInk, setHasCanvasInk] = useState(false)
   const [homeScrollY, setHomeScrollY] = useState(0)
 
-  const scrollLocked = wizardStep > 1 || canvasExpanded
+  const scrollLocked = wizardStep > 1
 
   useEffect(() => {
-    if (wizardStep !== 1 || canvasExpanded) return
+    if (wizardStep !== 1) return
     const onScroll = () => {
       const y =
         window.scrollY ||
@@ -98,7 +97,7 @@ export default function App() {
     onScroll()
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
-  }, [wizardStep, canvasExpanded])
+  }, [wizardStep])
 
   useEffect(() => {
     if (!scrollLocked) return
@@ -121,15 +120,6 @@ export default function App() {
       .then((j: ApiFlags) => setApiConfig(j))
       .catch(() => setApiConfig(null))
   }, [])
-
-  useEffect(() => {
-    if (!canvasExpanded) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setCanvasExpanded(false)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [canvasExpanded])
 
   useEffect(() => {
     if (wizardStep !== 1) return
@@ -254,55 +244,59 @@ export default function App() {
 
   const goHome = useCallback(() => {
     setWizardStep(1)
-    setCanvasExpanded(false)
     setGalleryOpen(false)
   }, [])
 
-  const barClassWhenExpanded = canvasExpanded && wizardStep === 1 ? 'z-[75]' : ''
+  const floatingBarVariant =
+    wizardStep === 1
+      ? 'draw'
+      : wizardStep === 2
+        ? 'styleNav'
+        : wizardStep === 3
+          ? 'modelNav'
+          : 'result'
 
-  const step1DrawBarProps = {
-    variant: 'draw' as const,
-    tool,
-    onToolChange: setTool,
-    brushSize,
-    onBrushSizeChange: setBrushSize,
-    onClearSketch: () => canvasRef.current?.clear(),
-    onDownloadSketch: downloadSketch,
-    canvasExpanded,
-    onToggleCanvasExpand: () => setCanvasExpanded((v) => !v),
-    onPrimary: advanceFromSketch,
-    primaryLabel: 'Go',
-    primaryDisabled: !hasCanvasInk,
-  }
-
-  const fixedWizardBar =
-    wizardStep === 2 ? (
-      <FloatingCanvasBar
-        variant="styleNav"
-        onBack={() => goStep(1)}
-        onPrimary={() => goStep(3)}
-        primaryLabel="Go"
-      />
-    ) : wizardStep === 3 ? (
-      <FloatingCanvasBar
-        variant="modelNav"
-        onBack={() => goStep(2)}
-        onPrimary={() => void runPipeline()}
-        primaryLabel="Map it"
-        primaryDisabled={mapItDisabled}
-      />
-    ) : wizardStep === 4 ? (
-      <FloatingCanvasBar
-        variant="result"
-        onBack={() => goStep(3)}
-        onDownloadMap={downloadMap}
-        mapDownloadDisabled={!imageUrl}
-        onTryAgain={() => void runPipeline()}
-        onAddGallery={openGallery}
-        tryAgainDisabled={resultPhase === 'loading'}
-        addGalleryDisabled={!imageUrl || resultPhase === 'loading'}
-      />
-    ) : null
+  const floatingBar = (
+    <FloatingCanvasBar
+      variant={floatingBarVariant}
+      dock="fixed"
+      viewportScrollY={wizardStep === 1 ? homeScrollY : 0}
+      tool={tool}
+      onToolChange={setTool}
+      brushSize={brushSize}
+      onBrushSizeChange={setBrushSize}
+      onClearSketch={() => canvasRef.current?.clear()}
+      onDownloadSketch={downloadSketch}
+      onPrimary={
+        wizardStep === 1
+          ? advanceFromSketch
+          : wizardStep === 2
+            ? () => goStep(3)
+            : wizardStep === 3
+              ? () => void runPipeline()
+              : undefined
+      }
+      primaryLabel={wizardStep === 3 ? 'Map it' : 'Go'}
+      primaryDisabled={
+        wizardStep === 1 ? !hasCanvasInk : wizardStep === 3 ? mapItDisabled : false
+      }
+      onBack={
+        wizardStep === 2
+          ? () => goStep(1)
+          : wizardStep === 3
+            ? () => goStep(2)
+            : wizardStep === 4
+              ? () => goStep(3)
+              : undefined
+      }
+      onDownloadMap={downloadMap}
+      mapDownloadDisabled={!imageUrl}
+      onTryAgain={() => void runPipeline()}
+      onAddGallery={openGallery}
+      tryAgainDisabled={resultPhase === 'loading'}
+      addGalleryDisabled={!imageUrl || resultPhase === 'loading'}
+    />
+  )
 
   const pageBg =
     'bg-[#ebe4d6] bg-[radial-gradient(ellipse_at_top,_#f7f2ea_0%,_#e8dfd0_55%,_#dcd2c2_100%)]'
@@ -347,35 +341,15 @@ export default function App() {
           {/* Step 1 */}
           <section className="flex w-1/4 min-w-0 shrink-0 flex-col px-6 pb-12 pt-2 md:px-10">
             <div className="mx-auto w-full max-w-[960px]">
-              <div
-                className={
-                  canvasExpanded
-                    ? 'fixed inset-0 z-[70] flex items-center justify-center bg-black/50'
-                    : 'relative w-full'
-                }
-                onClick={
-                  canvasExpanded ? () => setCanvasExpanded(false) : undefined
-                }
-              >
-                <div
-                  className={
-                    canvasExpanded
-                      ? 'box-border h-full max-h-[100dvh] w-full max-w-[min(100vw,1400px)] px-4 py-6 sm:px-8'
-                      : 'relative w-full'
-                  }
-                  onClick={
-                    canvasExpanded ? (e) => e.stopPropagation() : undefined
-                  }
-                >
-                  <Canvas
-                    ref={canvasRef}
-                    tool={tool}
-                    onToolChange={setTool}
-                    brushSize={brushSize}
-                    onBrushSizeChange={setBrushSize}
-                    onInkChange={setHasCanvasInk}
-                  />
-                </div>
+              <div className="relative w-full">
+                <Canvas
+                  ref={canvasRef}
+                  tool={tool}
+                  onToolChange={setTool}
+                  brushSize={brushSize}
+                  onBrushSizeChange={setBrushSize}
+                  onInkChange={setHasCanvasInk}
+                />
               </div>
             </div>
           </section>
@@ -467,15 +441,7 @@ export default function App() {
         </div>
       </div>
 
-      {wizardStep === 1 && (
-        <FloatingCanvasBar
-          {...step1DrawBarProps}
-          dock="fixed"
-          viewportScrollY={canvasExpanded ? 0 : homeScrollY}
-          className={barClassWhenExpanded}
-        />
-      )}
-      {wizardStep >= 2 && fixedWizardBar}
+      {floatingBar}
 
       <GalleryDialog
         key={galleryMountKey}
@@ -486,7 +452,7 @@ export default function App() {
         saveError={gallerySaveError}
       />
 
-      {wizardStep === 1 && !canvasExpanded && (
+      {wizardStep === 1 && (
         <>
           <GalleryStrip entries={galleryEntries} />
           <PageFooter />

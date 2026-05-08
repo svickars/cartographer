@@ -2,6 +2,21 @@ import { type FormEvent, type ReactNode, useEffect, useState } from 'react'
 
 type GateState = 'loading' | 'locked' | 'open'
 
+async function readJson<T>(res: Response): Promise<T> {
+  const text = await res.text()
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    throw new Error(
+      res.ok
+        ? 'Unexpected response from server.'
+        : text.startsWith('<')
+          ? `Server error (${res.status}). Try again or check deployment logs.`
+          : text.slice(0, 180),
+    )
+  }
+}
+
 export function SitePasswordGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<GateState>('loading')
   const [password, setPassword] = useState('')
@@ -9,8 +24,10 @@ export function SitePasswordGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     fetch('/api/auth', { credentials: 'include' })
-      .then((r) => r.json())
-      .then((d: { passwordRequired: boolean; authenticated: boolean }) => {
+      .then((r) =>
+        readJson<{ passwordRequired: boolean; authenticated: boolean }>(r),
+      )
+      .then((d) => {
         if (!d.passwordRequired) setState('open')
         else if (d.authenticated) setState('open')
         else setState('locked')
@@ -28,7 +45,7 @@ export function SitePasswordGate({ children }: { children: ReactNode }) {
       body: JSON.stringify({ password }),
     })
       .then(async (r) => {
-        const j = (await r.json()) as { ok?: boolean; error?: string }
+        const j = await readJson<{ ok?: boolean; error?: string }>(r)
         if (!r.ok) throw new Error(j.error || 'Sign-in failed.')
         setState('open')
       })

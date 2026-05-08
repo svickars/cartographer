@@ -23,14 +23,31 @@ export function comparePassword(input: string, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
+/** URL-safe base64 without relying on Buffer encoding names that vary by Node version. */
+function bufferToBase64Url(buf: Buffer): string {
+  return buf
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
+}
+
+function base64UrlToBuffer(s: string): Buffer {
+  let b64 = s.replace(/-/g, '+').replace(/_/g, '/')
+  const pad = b64.length % 4
+  if (pad) b64 += '='.repeat(4 - pad)
+  return Buffer.from(b64, 'base64')
+}
+
+/** Hex HMAC — avoids `digest('base64url')`, which is not supported on some Node runtimes. */
 function signPayload(payload: string, secret: string): string {
-  return createHmac('sha256', secret).update(payload).digest('base64url')
+  return createHmac('sha256', secret).update(payload).digest('hex')
 }
 
 export function createSessionToken(secret: string): string {
   const exp = Date.now() + 7 * 24 * 60 * 60 * 1000
-  const payload = Buffer.from(JSON.stringify({ exp, v: 1 }), 'utf8').toString(
-    'base64url',
+  const payload = bufferToBase64Url(
+    Buffer.from(JSON.stringify({ exp, v: 1 }), 'utf8'),
   )
   const sig = signPayload(payload, secret)
   return `${payload}.${sig}`
@@ -45,19 +62,20 @@ export function verifySessionToken(
   if (dot === -1) return false
   const payload = token.slice(0, dot)
   const sig = token.slice(dot + 1)
-  const expected = signPayload(payload, secret)
-  const sb = Buffer.from(sig)
-  const eb = Buffer.from(expected)
-  if (sb.length !== eb.length) return false
+  const expectedHex = signPayload(payload, secret)
+  const sb = Buffer.from(sig, 'hex')
+  const eb = Buffer.from(expectedHex, 'hex')
+  if (sb.length !== eb.length || sb.length === 0) return false
   try {
     if (!timingSafeEqual(sb, eb)) return false
   } catch {
     return false
   }
   try {
-    const json = JSON.parse(
-      Buffer.from(payload, 'base64url').toString('utf8'),
-    ) as { exp?: number; v?: number }
+    const json = JSON.parse(base64UrlToBuffer(payload).toString('utf8')) as {
+      exp?: number
+      v?: number
+    }
     if (json.v !== 1) return false
     if (typeof json.exp !== 'number' || json.exp < Date.now()) return false
     return true

@@ -17,7 +17,7 @@ import {
   fetchGalleryEntries,
 } from './lib/galleryClient'
 import { loadGalleryLastName, saveGalleryLastName } from './lib/galleryPrefs'
-import type { GalleryEntry } from './types/gallery'
+import type { GalleryEntry, GalleryGenerationSnapshot } from './types/gallery'
 import { interpretSketch } from './lib/interpretSketch'
 import type { GenerationModelId } from './lib/modelConfig'
 import type { MapStyleId } from './lib/mapStyles'
@@ -76,7 +76,11 @@ export default function App() {
   >('idle')
 
   const [apiConfig, setApiConfig] = useState<ApiFlags | null>(null)
+  const GALLERY_PAGE = 4
   const [galleryEntries, setGalleryEntries] = useState<GalleryEntry[]>([])
+  const [galleryTotal, setGalleryTotal] = useState(0)
+  const [galleryReady, setGalleryReady] = useState(false)
+  const [galleryLoadingMore, setGalleryLoadingMore] = useState(false)
   const [galleryOpen, setGalleryOpen] = useState(false)
   const [galleryMountKey, setGalleryMountKey] = useState(0)
   const [gallerySaveError, setGallerySaveError] = useState<string | null>(null)
@@ -109,9 +113,29 @@ export default function App() {
   }, [scrollLocked])
 
   useEffect(() => {
-    fetchGalleryEntries()
-      .then(setGalleryEntries)
-      .catch(() => setGalleryEntries([]))
+    let cancelled = false
+    void (async () => {
+      try {
+        const { entries, total } = await fetchGalleryEntries({
+          limit: GALLERY_PAGE,
+          offset: 0,
+        })
+        if (!cancelled) {
+          setGalleryEntries(entries)
+          setGalleryTotal(total)
+        }
+      } catch {
+        if (!cancelled) {
+          setGalleryEntries([])
+          setGalleryTotal(0)
+        }
+      } finally {
+        if (!cancelled) setGalleryReady(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   useEffect(() => {
@@ -225,10 +249,16 @@ export default function App() {
       const sketch = await canvasRef.current?.exportPngBase64()
       if (!sketch || !imageUrl) return false
       const sketchDataUrl = `data:image/png;base64,${sketch}`
+      const ctrls = normalizeControls(controls)
+      const generation: GalleryGenerationSnapshot = {
+        mapStyleId: styleId,
+        controls: ctrls,
+      }
       const result = await createGalleryEntry({
         displayName,
         sketchDataUrl,
         mapDataUrl: imageUrl,
+        generation,
       })
       if (!result.ok) {
         setGallerySaveError(result.error)
@@ -236,9 +266,35 @@ export default function App() {
       }
       saveGalleryLastName(displayName)
       setGalleryEntries(result.entries)
+      setGalleryTotal(result.total)
       return true
     },
-    [imageUrl],
+    [controls, imageUrl, styleId],
+  )
+
+  const handleLoadMoreGallery = useCallback(async () => {
+    if (galleryLoadingMore || galleryEntries.length >= galleryTotal) return
+    setGalleryLoadingMore(true)
+    try {
+      const { entries, total } = await fetchGalleryEntries({
+        limit: GALLERY_PAGE,
+        offset: galleryEntries.length,
+      })
+      setGalleryEntries((prev) => [...prev, ...entries])
+      setGalleryTotal(total)
+    } catch {
+      /* keep current list */
+    } finally {
+      setGalleryLoadingMore(false)
+    }
+  }, [galleryEntries.length, galleryLoadingMore, galleryTotal])
+
+  const handleApplyGalleryGeneration = useCallback(
+    (snap: GalleryGenerationSnapshot) => {
+      setStyleId(snap.mapStyleId)
+      setControls(normalizeControls(snap.controls))
+    },
+    [],
   )
 
   const goStep = (step: number) => {
@@ -463,7 +519,14 @@ export default function App() {
 
       {wizardStep === 1 && (
         <>
-          <GalleryStrip entries={galleryEntries} />
+          <GalleryStrip
+            entries={galleryEntries}
+            total={galleryTotal}
+            ready={galleryReady}
+            loadingMore={galleryLoadingMore}
+            onLoadMore={handleLoadMoreGallery}
+            onApplyGeneration={handleApplyGalleryGeneration}
+          />
           <PageFooter />
         </>
       )}

@@ -5,14 +5,12 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 
 import { getNeonSql } from './galleryDb.js'
 import { requireSiteAuth } from '../server/siteAuth.js'
-
-export type GalleryRow = {
-  id: string
-  displayName: string
-  sketchUrl: string
-  mapUrl: string
-  createdAt: string
-}
+import { normalizeMapStyleId } from '../src/lib/mapStyles.js'
+import type {
+  GalleryEntry,
+  GalleryGenerationSnapshot,
+} from '../src/types/gallery.js'
+import { normalizeControls } from '../src/types/generativeControls.js'
 
 async function ensureGalleryTable(
   sql: NonNullable<ReturnType<typeof getNeonSql>>,
@@ -25,6 +23,10 @@ async function ensureGalleryTable(
       map_url text NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now()
     )
+  `
+  await sql`
+    ALTER TABLE gallery_entries
+    ADD COLUMN IF NOT EXISTS generation_json jsonb
   `
 }
 
@@ -79,23 +81,46 @@ async function bytesFromImageRef(src: string): Promise<{
   return { buffer: buf, filenameSuffix: suffix, contentType: ct }
 }
 
+function parseGenerationJson(raw: unknown): GalleryGenerationSnapshot | undefined {
+  if (raw == null) return undefined
+  let v: unknown = raw
+  if (typeof v === 'string') {
+    try {
+      v = JSON.parse(v) as unknown
+    } catch {
+      return undefined
+    }
+  }
+  if (!v || typeof v !== 'object') return undefined
+  const o = v as Record<string, unknown>
+  return {
+    mapStyleId: normalizeMapStyleId(o.mapStyleId),
+    controls: normalizeControls(
+      o.controls as Partial<import('../src/types/generativeControls.js').GenerativeControls>,
+    ),
+  }
+}
+
 function rowToEntry(r: {
   id: string
   display_name: string
   sketch_url: string
   map_url: string
   created_at: Date | string
-}): GalleryRow {
+  generation_json: unknown | null
+}): GalleryEntry {
   const created =
     r.created_at instanceof Date
       ? r.created_at.toISOString()
       : String(r.created_at)
+  const gen = parseGenerationJson(r.generation_json)
   return {
     id: r.id,
     displayName: r.display_name,
     sketchUrl: r.sketch_url,
     mapUrl: r.map_url,
     createdAt: created,
+    ...(gen ? { generation: gen } : {}),
   }
 }
 
@@ -105,6 +130,18 @@ type DbRow = {
   sketch_url: string
   map_url: string
   created_at: Date | string
+  generation_json: unknown | null
+}
+
+function sanitizeGenerationBody(raw: unknown): GalleryGenerationSnapshot | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  return {
+    mapStyleId: normalizeMapStyleId(o.mapStyleId),
+    controls: normalizeControls(
+      o.controls as Partial<import('../src/types/generativeControls.js').GenerativeControls>,
+    ),
+  }
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -131,14 +168,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!requireSiteAuth(req, res)) return
     try {
       await ensureGalleryTable(sql)
+      const limitRaw = Number(
+        (req.query as { limit?: string }).limit ?? '4',
+      )
+      const offsetRaw = Number(
+        (req.query as { offset?: string }).offset ?? '0',
+      )
+      const limit = Number.isFinite(limitRaw)
+        ? Math.min(50, Math.max(1, Math.floor(limitRaw)))
+        : 4
+      const offset = Number.isFinite(offsetRaw)
+        ? Math.max(0, Math.floor(offsetRaw))
+        : 0
+
+      const countRows = (await sql`
+        SELECT COUNT(*)::int AS n FROM gallery_entries
+      `) as { n: number }[]
+      const total = countRows[0]?.n ?? 0
+
       const rows = (await sql`
-        SELECT id, display_name, sketch_url, map_url, created_at
+        SELECT id, display_name, sketch_url, map_url, created_at, generation_json
         FROM gallery_entries
         ORDER BY created_at DESC
-        LIMIT 100
+        LIMIT ${limit}
+        OFFSET ${offset}
       `) as DbRow[]
       const entries = rows.map((r) => rowToEntry(r))
-      return res.status(200).json({ ok: true, entries })
+      return res.status(200).json({ ok: true, entries, total })
     } catch (e) {
       console.error(e)
       const message = e instanceof Error ? e.message : 'Gallery load failed.'
@@ -154,6 +210,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           displayName?: string
           sketchDataUrl?: string
           mapDataUrl?: string
+          generation?: unknown
         }
       | undefined
 
@@ -172,6 +229,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     if (!mapDataUrl || typeof mapDataUrl !== 'string') {
       return res.status(400).json({ ok: false, error: 'mapDataUrl is required.' })
+    }
+
+    const generation = sanitizeGenerationBody(body?.generation)
+    if (!generation) {
+      return res.status(400).json({
+        ok: false,
+        error: 'generation with mapStyleId and controls is required.',
+      })
     }
 
     try {
@@ -202,9 +267,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       )
 
       const inserted = (await sql`
-        INSERT INTO gallery_entries (id, display_name, sketch_url, map_url)
-        VALUES (${entryId}, ${displayName}, ${sketchBlob.url}, ${mapBlob.url})
-        RETURNING id, display_name, sketch_url, map_url, created_at
+        INSERT INTO gallery_entries (id, display_name, sketch_url, map_url, generation_json)
+        VALUES (
+          ${entryId},
+          ${displayName},
+          ${sketchBlob.url},
+          ${mapBlob.url},
+          ${JSON.stringify(generation)}
+        )
+        RETURNING id, display_name, sketch_url, map_url, created_at, generation_json
       `) as DbRow[]
 
       const row = inserted[0]
@@ -213,15 +284,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       const entry = rowToEntry(row)
 
-      const all = (await sql`
-        SELECT id, display_name, sketch_url, map_url, created_at
+      const countRows = (await sql`
+        SELECT COUNT(*)::int AS n FROM gallery_entries
+      `) as { n: number }[]
+      const total = countRows[0]?.n ?? 0
+
+      const firstPage = (await sql`
+        SELECT id, display_name, sketch_url, map_url, created_at, generation_json
         FROM gallery_entries
         ORDER BY created_at DESC
-        LIMIT 100
+        LIMIT 4
+        OFFSET 0
       `) as DbRow[]
-      const entries = all.map((r) => rowToEntry(r))
+      const entries = firstPage.map((r) => rowToEntry(r))
 
-      return res.status(200).json({ ok: true, entry, entries })
+      return res.status(200).json({ ok: true, entry, entries, total })
     } catch (e) {
       console.error(e)
       const message =

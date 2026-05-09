@@ -66,3 +66,13 @@ export const MAP_STYLES: readonly MapStyleOption[] = [
     generationClause: SKETCH_GENERATION_CLAUSE,
   },
 ]
+
+const MAP_STYLE_IDS = new Set<MapStyleId>(MAP_STYLES.map((s) => s.id))
+
+/** Coerce API/JSON values to a known map style id. */
+export function normalizeMapStyleId(value: unknown): MapStyleId {
+  if (typeof value === 'string' && MAP_STYLE_IDS.has(value as MapStyleId)) {
+    return value as MapStyleId
+  }
+  return 'illustrated'
+}

@@ -3,6 +3,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 
 import { requireSiteAuth } from '../server/siteAuth.js'
 import { buildInterpretationControlGuidance } from '../src/lib/generativeControlCopy.js'
+import type { InterpretAnnotation } from '../src/types/canvasAnnotations.js'
 import type { SketchInterpretation } from '../src/types/interpretation.js'
 import {
   normalizeControls,
@@ -47,9 +48,76 @@ function extractJsonObject(text: string): string {
   return text.trim()
 }
 
-function buildUserText(controls: GenerativeControls): string {
+function normalizeAnnotations(raw: unknown): InterpretAnnotation[] {
+  if (!Array.isArray(raw)) return []
+  const out: InterpretAnnotation[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const o = item as Record<string, unknown>
+    const t = o.type
+    const x = Number(o.x)
+    const y = Number(o.y)
+    if (t !== 'emoji' && t !== 'text') continue
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue
+    if (t === 'emoji') {
+      const content = typeof o.content === 'string' ? o.content : ''
+      const scale = Number(o.scale)
+      if (!content) continue
+      out.push({
+        type: 'emoji',
+        content,
+        x: Math.min(1, Math.max(0, x)),
+        y: Math.min(1, Math.max(0, y)),
+        scale:
+          Number.isFinite(scale) && scale > 0
+            ? Math.min(4, Math.max(0.25, scale))
+            : 1,
+      })
+    } else {
+      const content = typeof o.content === 'string' ? o.content : ''
+      const style = o.style
+      const okStyle =
+        style === 'header' ||
+        style === 'subheader' ||
+        style === 'label' ||
+        style === 'small' ||
+        style === 'decorative'
+      if (!content || !okStyle) continue
+      out.push({
+        type: 'text',
+        content,
+        x: Math.min(1, Math.max(0, x)),
+        y: Math.min(1, Math.max(0, y)),
+        style,
+      })
+    }
+  }
+  return out
+}
+
+function buildAnnotationGroundTruthBlock(annotations: InterpretAnnotation[]): string {
+  if (annotations.length === 0) return ''
+  const json = JSON.stringify(annotations, null, 2)
+  return `USER ANNOTATIONS (structured — treat as ground truth for placement and meaning):
+The user placed the following on the map using annotation tools. Each entry uses x and y as fractions of image width and height (0–1, origin top-left).
+For every annotation, treat the content at that location as HIGH confidence intent: do not second-guess, reinterpret away, or omit it. Merge this information with the sketch interpretation; if sketch strokes are ambiguous at an annotated location, prefer the annotation.
+${json}
+
+Emoji annotations ("type":"emoji"): the string in "content" is a compact hint for WHAT belongs at those coordinates (e.g. woodland, peak, harbour, building), not a specification for how the finished map should look. Describe the intended geographic or cartographic feature in neutral map-making language in roads/water/landmarks/terrain/labels/notes as appropriate. Do not write descriptions that tell a later image model to paint the emoji glyph, a phone-style sticker, or glossy pictograph art — downstream rendering will follow the user's chosen map style, not the emoji's visual design.`
+}
+
+function buildUserText(
+  controls: GenerativeControls,
+  annotations: InterpretAnnotation[],
+): string {
   const guidance = buildInterpretationControlGuidance(controls)
-  return `${INTERPRET_PROMPT}\n\n${guidance}`
+  const annBlock = buildAnnotationGroundTruthBlock(annotations)
+  const parts = [INTERPRET_PROMPT]
+  if (annBlock) {
+    parts.push('', annBlock)
+  }
+  parts.push('', guidance)
+  return parts.join('\n')
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -69,17 +137,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const body = req.body as
-    | { imageBase64?: string; controls?: Partial<GenerativeControls> }
+    | {
+        imageBase64?: string
+        image?: string
+        annotations?: unknown
+        controls?: Partial<GenerativeControls>
+      }
     | undefined
-  const raw = body?.imageBase64
+  const raw =
+    typeof body?.imageBase64 === 'string'
+      ? body.imageBase64
+      : typeof body?.image === 'string'
+        ? body.image
+        : undefined
   if (!raw || typeof raw !== 'string') {
     return res.status(400).json({
       ok: false,
-      error: 'Expected JSON body { imageBase64, controls? }',
+      error:
+        'Expected JSON body { imageBase64 (or image), controls?, annotations? }',
     })
   }
 
   const controls = normalizeControls(body?.controls)
+  const annotations = normalizeAnnotations(body?.annotations)
 
   const pngBase64 = stripBase64Prefix(raw)
 
@@ -103,7 +183,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             },
             {
               type: 'text',
-              text: buildUserText(controls),
+              text: buildUserText(controls, annotations),
             },
           ],
         },

@@ -136,7 +136,7 @@ export default function App() {
     if (pipelineLock.current) return
     pipelineLock.current = true
 
-    const rawPng = canvasRef.current?.exportPngBase64()
+    const rawPng = await canvasRef.current?.exportPngBase64()
     if (!rawPng) {
       setFlowError('Draw something on the canvas first.')
       pipelineLock.current = false
@@ -144,6 +144,9 @@ export default function App() {
     }
 
     const ctrls = normalizeControls(controls)
+    const interpretAnnotations =
+      canvasRef.current?.getInterpretAnnotations() ?? []
+
 
     if (apiConfig && !pipelineAllowedForGptImage(apiConfig)) {
       setFlowError(
@@ -162,7 +165,11 @@ export default function App() {
     const t0 = Date.now()
 
     try {
-      const interp = await interpretSketch(rawPng, ctrls)
+      const interp = await interpretSketch(
+        rawPng,
+        ctrls,
+        interpretAnnotations,
+      )
       setInterpretation(interp)
 
       const prompt = buildGptImageEditPrompt(interp, styleId, ctrls, {
@@ -192,12 +199,14 @@ export default function App() {
   }, [apiConfig, controls, styleId])
 
   const downloadSketch = useCallback(() => {
-    const b64 = canvasRef.current?.exportPngBase64()
-    if (!b64) return
-    const a = document.createElement('a')
-    a.href = `data:image/png;base64,${b64}`
-    a.download = 'cartographer-sketch.png'
-    a.click()
+    void (async () => {
+      const b64 = await canvasRef.current?.exportPngBase64()
+      if (!b64) return
+      const a = document.createElement('a')
+      a.href = `data:image/png;base64,${b64}`
+      a.download = 'cartographer-sketch.png'
+      a.click()
+    })()
   }, [])
 
   const downloadMap = useCallback(() => {
@@ -213,7 +222,7 @@ export default function App() {
 
   const handleGallerySubmit = useCallback(
     async (displayName: string): Promise<boolean> => {
-      const sketch = canvasRef.current?.exportPngBase64()
+      const sketch = await canvasRef.current?.exportPngBase64()
       if (!sketch || !imageUrl) return false
       const sketchDataUrl = `data:image/png;base64,${sketch}`
       const result = await createGalleryEntry({
@@ -322,7 +331,7 @@ export default function App() {
             <button
               type="button"
               onClick={goHome}
-              className="text-[#1a2744] underline-offset-4 transition hover:text-[#1a2744]/85 hover:underline"
+              className="inline-block cursor-pointer origin-left scale-100 text-[#1a2744] transition-all duration-300 ease-out hover:scale-105 hover:text-[#1a2744]/85 motion-reduce:transition-colors motion-reduce:duration-200 motion-reduce:hover:scale-100"
             >
               Cartographer
             </button>
@@ -380,14 +389,14 @@ export default function App() {
                 Input your settings
               </p>
               <p className="mt-2 max-w-xl font-sans text-sm text-[#1a2744]/75">
-                Tune imagination, richness, and era. We use GPT Image with your
-                sketch.
+                Tune interpretation (imagination, relief) and style (richness,
+                era, formality, toponymy). We use GPT Image with your sketch.
               </p>
               <div className="mt-8 min-h-0 flex-1 overflow-y-auto pb-28">
                 <GenerativeControls
-                  variant="row"
                   value={controls}
                   onChange={setControls}
+                  mapStyleId={styleId}
                 />
               </div>
               {apiConfig && !apiConfig.anthropicConfigured && (

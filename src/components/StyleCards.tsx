@@ -8,7 +8,7 @@ type Props = {
 
 export function StyleCards({ value, onChange, disabled }: Props) {
   return (
-    <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
+    <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {MAP_STYLES.map((s) => (
         <button
           key={s.id}

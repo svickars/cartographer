@@ -1,3 +1,4 @@
+import { Loader2 } from 'lucide-react'
 import { type FormEvent, useState } from 'react'
 
 type Props = {
@@ -18,15 +19,21 @@ export function GalleryDialog({
   saveError,
 }: Props) {
   const [name, setName] = useState(initialName)
+  const [saving, setSaving] = useState(false)
 
   if (!open) return null
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     const trimmed = name.trim()
-    if (!trimmed) return
-    const ok = await onSubmit(trimmed)
-    if (ok) onClose()
+    if (!trimmed || saving) return
+    setSaving(true)
+    try {
+      const ok = await onSubmit(trimmed)
+      if (ok) onClose()
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -40,7 +47,11 @@ export function GalleryDialog({
         <p className="mt-2 font-sans text-sm text-[#1a2744]/75">
           How should we credit you?
         </p>
-        <form onSubmit={(e) => void handleSubmit(e)} className="mt-6 space-y-4">
+        <form
+          aria-busy={saving}
+          onSubmit={(e) => void handleSubmit(e)}
+          className="mt-6 space-y-4"
+        >
           <div>
             <label
               className="font-sans text-sm font-medium text-[#1a2744]"
@@ -52,7 +63,8 @@ export function GalleryDialog({
               id="gallery-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="mt-1 w-full rounded border border-[#1a2744]/25 bg-white px-3 py-2 font-sans text-[#1a2744]"
+              disabled={saving}
+              className="mt-1 w-full rounded border border-[#1a2744]/25 bg-white px-3 py-2 font-sans text-[#1a2744] disabled:opacity-60"
               autoComplete="name"
               placeholder="Sam V."
             />
@@ -66,15 +78,27 @@ export function GalleryDialog({
             <button
               type="button"
               onClick={onClose}
-              className="rounded border border-[#1a2744]/25 bg-white px-4 py-2 text-sm text-[#1a2744]"
+              disabled={saving}
+              className="cursor-pointer rounded border border-[#1a2744]/25 bg-white px-4 py-2 text-sm text-[#1a2744] transition hover:border-[#1a2744]/40 hover:bg-[#f4efe6] disabled:pointer-events-none disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="rounded border border-[#1a2744] bg-[#1a2744] px-4 py-2 text-sm font-medium text-[#f4efe6]"
+              disabled={saving}
+              className="inline-flex cursor-pointer items-center justify-center gap-2 rounded border border-[#1a2744] bg-[#1a2744] px-4 py-2 text-sm font-medium text-[#f4efe6] transition hover:border-[#243554] hover:bg-[#243554] disabled:cursor-wait disabled:opacity-90"
             >
-              Save
+              {saving ? (
+                <>
+                  <Loader2
+                    className="h-4 w-4 shrink-0 animate-spin"
+                    aria-hidden
+                  />
+                  Saving…
+                </>
+              ) : (
+                'Save'
+              )}
             </button>
           </div>
         </form>
